@@ -1,0 +1,15 @@
+youtube-transcript-api
+langchain
+langchain-community
+langchain-core
+langchain-huggingface
+huggingface_hub
+transformers
+pgvector
+psycopg2-binary
+sqlalchemy
+tiktoken
+python-dotenv
+sentence-transformers
+langchain-groq
+streamlit
