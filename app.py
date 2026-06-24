@@ -17,15 +17,13 @@ st.set_page_config(
 
 # ─── SECURE CREDENTIALS via .env + st.secrets ────────────────────────────────
 from dotenv import load_dotenv
-load_dotenv(override=True)  # loads .env into os.environ first
+load_dotenv(override=True)
 
 def _get_secret(key: str, env_fallback: str | None = None) -> str | None:
-    # 1. Try st.secrets (Streamlit Cloud)
     try:
         return st.secrets[key]
     except (KeyError, FileNotFoundError):
         pass
-    # 2. Fallback to .env / environment variables
     return os.environ.get(env_fallback or key)
 
 
@@ -33,13 +31,13 @@ GROQ_API_KEY = _get_secret("GROQ_API_KEY")
 DATABASE_URL = _get_secret("DATABASE_URL")
 HF_TOKEN     = _get_secret("HUGGINGFACEHUB_API_TOKEN")
 
-# Inject into env so LangChain / HuggingFace SDKs can pick them up
 if GROQ_API_KEY:
     os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 if HF_TOKEN:
     os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
-# ─── LAZY IMPORTS (speed up cold start) ──────────────────────────────────────
+# ─── LAZY IMPORTS ────────────────────────────────────────────────────────────
+from sqlalchemy import create_engine, text
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, VideoUnavailable
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -60,7 +58,6 @@ html, body, [data-testid="stAppViewContainer"] {
     font-family: 'Inter', sans-serif;
 }
 
-/* ── Base ── */
 .stApp { background: #0f0f13; color: #e8e8f0; }
 
 [data-testid="stSidebar"] {
@@ -72,7 +69,6 @@ html, body, [data-testid="stAppViewContainer"] {
 header[data-testid="stHeader"]  { background: transparent !important; }
 [data-testid="stDecoration"]    { display: none; }
 
-/* ── Logo / wordmark ── */
 .brand {
     display: flex;
     align-items: center;
@@ -94,16 +90,13 @@ header[data-testid="stHeader"]  { background: transparent !important; }
 }
 .brand-tagline { color: #555; font-size: 0.78rem; margin-bottom: 1.25rem; }
 
-/* ── Divider ── */
 .hr { border: none; border-top: 1px solid #22223a; margin: 1rem 0; }
 
-/* ── Section label ── */
 .section-label {
     font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em;
     text-transform: uppercase; color: #555; margin-bottom: 0.5rem;
 }
 
-/* ── Pill badges ── */
 .pill {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 3px 10px; border-radius: 20px;
@@ -113,7 +106,6 @@ header[data-testid="stHeader"]  { background: transparent !important; }
 .pill-yellow { background:#2a1f00; color:#f9d423; border:1px solid #854d0e; }
 .pill-red    { background:#2e0d0d; color:#f87171; border:1px solid #7f1d1d; }
 
-/* ── Video info card ── */
 .video-card {
     background: #1a1a26; border: 1px solid #22223a;
     border-radius: 12px; padding: 12px 14px; margin-top: 0.75rem;
@@ -126,7 +118,6 @@ header[data-testid="stHeader"]  { background: transparent !important; }
 }
 .video-stat { font-size: 0.78rem; color:#555; margin-top: 8px; }
 
-/* ── Suggestion pills ── */
 .stButton button[kind="secondary"],
 .stButton > button {
     background: #1a1a26 !important;
@@ -146,7 +137,6 @@ header[data-testid="stHeader"]  { background: transparent !important; }
     background: #1f1520 !important;
 }
 
-/* ── Primary / load button override ── */
 div[data-testid="column"] .stButton > button,
 .load-btn .stButton > button {
     background: linear-gradient(135deg,#ff4e50,#f9d423) !important;
@@ -158,7 +148,6 @@ div[data-testid="column"] .stButton > button,
     padding: 10px !important;
 }
 
-/* ── Chat messages ── */
 .chat-wrap { display: flex; flex-direction: column; gap: 10px; }
 
 .msg-row-user { display: flex; justify-content: flex-end; }
@@ -191,7 +180,6 @@ div[data-testid="column"] .stButton > button,
 .msg-label-user { color:#555; text-align:right; }
 .msg-label-bot  { color:#ff4e50; }
 
-/* ── Empty state ── */
 .empty-state {
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; padding: 4rem 1rem; gap: 0.5rem;
@@ -201,7 +189,6 @@ div[data-testid="column"] .stButton > button,
 .empty-title  { font-size: 1.05rem; font-weight: 600; color: #444; }
 .empty-hint   { font-size: 0.83rem; color: #333; }
 
-/* ── Page header ── */
 .page-header {
     display: flex; align-items: baseline; gap: 14px;
     margin-bottom: 0.25rem;
@@ -213,7 +200,6 @@ div[data-testid="column"] .stButton > button,
     letter-spacing:-0.02em;
 }
 
-/* ── Input row ── */
 .stTextInput input {
     background: #16161f !important;
     border: 1px solid #2a2a3a !important;
@@ -228,7 +214,6 @@ div[data-testid="column"] .stButton > button,
     box-shadow: 0 0 0 2px #ff4e5018 !important;
 }
 
-/* ── Error / warning callouts ── */
 .callout {
     padding: 12px 16px; border-radius: 10px;
     font-size: 0.87rem; margin: 0.5rem 0;
@@ -240,7 +225,6 @@ div[data-testid="column"] .stButton > button,
     background: #2e0d0d; border-left: 3px solid #f87171; color: #ef8080;
 }
 
-/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 4px; }
@@ -275,6 +259,16 @@ def extract_video_id(raw: str) -> str | None:
 
 def format_docs(docs) -> str:
     return "\n\n".join(d.page_content for d in docs)
+
+
+def drop_pgvector_tables():
+    """Drop old PGVector tables so they are recreated with the correct schema."""
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS langchain_pg_embedding CASCADE;"))
+        conn.execute(text("DROP TABLE IF EXISTS langchain_pg_collection CASCADE;"))
+        conn.commit()
+    engine.dispose()
 
 
 # ─── CACHED RESOURCES ────────────────────────────────────────────────────────
@@ -314,7 +308,9 @@ def build_chain(video_id: str):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.create_documents([transcript])
 
-    # 3. Vector store (Neon / PGVector)
+    # 3. Drop old tables to avoid schema mismatch, then build vector store
+    drop_pgvector_tables()
+
     embeddings = load_embeddings()
     vector_store = PGVector.from_documents(
         documents=chunks,
@@ -324,7 +320,7 @@ def build_chain(video_id: str):
         pre_delete_collection=False,
     )
 
-    # 4. Retriever (MMR for diversity)
+    # 4. Retriever
     retriever = vector_store.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 4, "fetch_k": 20},
