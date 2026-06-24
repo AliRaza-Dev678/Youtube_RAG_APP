@@ -43,6 +43,7 @@ if HF_TOKEN:
 # ─── LAZY IMPORTS ────────────────────────────────────────────────────────────
 from sqlalchemy import create_engine, text
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, VideoUnavailable
+from youtube_transcript_api.proxies import WebshareProxyConfig
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import PGVector
@@ -265,15 +266,15 @@ def format_docs(docs) -> str:
     return "\n\n".join(d.page_content for d in docs)
 
 
-def get_proxies() -> dict | None:
-    """Build proxy dict from secrets. Returns None if no proxy configured."""
-    if PROXY_HOST and PROXY_PORT:
-        if PROXY_USER and PROXY_PASS:
-            proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
-        else:
-            proxy_url = f"http://{PROXY_HOST}:{PROXY_PORT}"
-        return {"http": proxy_url, "https": proxy_url}
-    return None
+def get_ytt() -> YouTubeTranscriptApi:
+    """Return YouTubeTranscriptApi instance with proxy if configured."""
+    if PROXY_USER and PROXY_PASS:
+        proxy_config = WebshareProxyConfig(
+            proxy_username=PROXY_USER,
+            proxy_password=PROXY_PASS,
+        )
+        return YouTubeTranscriptApi(proxy_config=proxy_config)
+    return YouTubeTranscriptApi()
 
 
 def drop_pgvector_tables():
@@ -311,9 +312,8 @@ def build_chain(video_id: str):
     Build the full RAG chain for a video.
     Cached by video_id — subsequent loads of the same video are instant.
     """
-    # 1. Transcript (with optional proxy to bypass YouTube IP bans)
-    proxies = get_proxies()
-    ytt = YouTubeTranscriptApi(proxies=proxies)
+    # 1. Transcript (with Webshare proxy to bypass YouTube IP bans)
+    ytt = get_ytt()
     try:
         fetched = ytt.fetch(video_id, languages=["en"])
     except NoTranscriptFound:
@@ -413,10 +413,10 @@ with st.sidebar:
         st.stop()
 
     # ── Proxy status ──────────────────────────────────────────────────────────
-    if PROXY_HOST:
-        st.markdown(f'<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Proxy active: {PROXY_HOST}</div>', unsafe_allow_html=True)
+    if PROXY_USER and PROXY_PASS:
+        st.markdown('<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Proxy active</div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div style="font-size:0.75rem;color:#888;margin-bottom:0.5rem">⚠ No proxy — may fail on cloud</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:0.75rem;color:#f9d423;margin-bottom:0.5rem">⚠ No proxy — may fail on cloud</div>', unsafe_allow_html=True)
 
     # ── Video input ───────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Load a video</div>', unsafe_allow_html=True)
