@@ -5,6 +5,9 @@ Credentials loaded from .env locally or st.secrets on Streamlit Cloud.
 
 import os
 import re
+import json
+import time
+import urllib.request
 import streamlit as st
 
 # ─── MUST be first Streamlit call ────────────────────────────────────────────
@@ -30,10 +33,6 @@ def _get_secret(key: str, env_fallback: str | None = None) -> str | None:
 GROQ_API_KEY = _get_secret("GROQ_API_KEY")
 DATABASE_URL = _get_secret("DATABASE_URL")
 HF_TOKEN     = _get_secret("HUGGINGFACEHUB_API_TOKEN")
-PROXY_HOST   = _get_secret("PROXY_HOST")
-PROXY_PORT   = _get_secret("PROXY_PORT")
-PROXY_USER   = _get_secret("PROXY_USER")
-PROXY_PASS   = _get_secret("PROXY_PASS")
 
 if GROQ_API_KEY:
     os.environ["GROQ_API_KEY"] = GROQ_API_KEY
@@ -41,10 +40,8 @@ if HF_TOKEN:
     os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
 # ─── LAZY IMPORTS ────────────────────────────────────────────────────────────
-import time
+import yt_dlp
 from sqlalchemy import create_engine, text
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, VideoUnavailable
-from youtube_transcript_api.proxies import WebshareProxyConfig
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import PGVector
@@ -267,34 +264,64 @@ def format_docs(docs) -> str:
     return "\n\n".join(d.page_content for d in docs)
 
 
-def get_ytt() -> YouTubeTranscriptApi:
-    """Return YouTubeTranscriptApi with Webshare rotating proxy if configured."""
-    if PROXY_USER and PROXY_PASS:
-        proxy_config = WebshareProxyConfig(
-            proxy_username=PROXY_USER,
-            proxy_password=PROXY_PASS,
-        )
-        return YouTubeTranscriptApi(proxy_config=proxy_config)
-    return YouTubeTranscriptApi()
+def fetch_transcript(video_id: str) -> str:
+    """
+    Fetch transcript using yt-dlp — no proxy or API key needed.
+    Works on Streamlit Cloud without IP bans.
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = {
+        "writeautomaticsub": True,
+        "writesubtitles": True,
+        "subtitleslangs": ["en"],
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
 
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
 
-def fetch_transcript(video_id: str, retries: int = 3) -> str:
-    """Fetch transcript with retry + exponential backoff on 429 errors."""
-    ytt = get_ytt()
-    for attempt in range(retries):
-        try:
-            try:
-                fetched = ytt.fetch(video_id, languages=["en"])
-            except NoTranscriptFound:
-                fetched = ytt.fetch(video_id)
-            return " ".join(part.text for part in fetched)
-        except Exception as e:
-            if attempt < retries - 1:
-                wait = 2 ** attempt  # 1s, 2s, 4s
-                time.sleep(wait)
-                ytt = get_ytt()  # fresh instance on retry
-            else:
-                raise e
+    # Try automatic captions first, then manual subtitles
+    captions = info.get("automatic_captions") or {}
+    subtitles = info.get("subtitles") or {}
+
+    # Merge both, prefer automatic captions
+    all_captions = {**subtitles, **captions}
+
+    if not all_captions:
+        raise Exception("No captions found for this video.")
+
+    # Pick English or first available language
+    lang = "en" if "en" in all_captions else list(all_captions.keys())[0]
+    entries = all_captions[lang]
+
+    # Find json3 format (easiest to parse)
+    json3_url = None
+    for entry in entries:
+        if entry.get("ext") == "json3":
+            json3_url = entry["url"]
+            break
+
+    if not json3_url:
+        # Fallback: use first available format URL directly
+        json3_url = entries[0]["url"]
+
+    with urllib.request.urlopen(json3_url) as r:
+        data = json.loads(r.read())
+
+    events = data.get("events", [])
+    text = " ".join(
+        seg.get("utf8", "")
+        for e in events
+        for seg in e.get("segs", [])
+        if seg.get("utf8", "").strip() not in ("", "\n")
+    )
+
+    if not text.strip():
+        raise Exception("Transcript is empty for this video.")
+
+    return text.strip()
 
 
 def drop_pgvector_tables():
@@ -332,7 +359,7 @@ def build_chain(video_id: str):
     Build the full RAG chain for a video.
     Cached by video_id — subsequent loads of the same video are instant.
     """
-    # 1. Transcript with retry + rotating proxy
+    # 1. Transcript via yt-dlp (no proxy needed)
     transcript = fetch_transcript(video_id)
 
     # 2. Split
@@ -427,12 +454,6 @@ with st.sidebar:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # ── Proxy status ──────────────────────────────────────────────────────────
-    if PROXY_USER and PROXY_PASS:
-        st.markdown('<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Rotating proxy active</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div style="font-size:0.75rem;color:#f9d423;margin-bottom:0.5rem">⚠ No proxy — may fail on cloud</div>', unsafe_allow_html=True)
-
     # ── Video input ───────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Load a video</div>', unsafe_allow_html=True)
     video_input = st.text_input(
@@ -465,10 +486,6 @@ with st.sidebar:
                         st.session_state.chunk_count  = n_chunks
                         st.session_state.messages     = []
                         st.rerun()
-                    except VideoUnavailable:
-                        st.error("This video is unavailable or private.")
-                    except NoTranscriptFound:
-                        st.error("No English transcript found for this video.")
                     except Exception as e:
                         st.error(f"Error: {e}")
 
