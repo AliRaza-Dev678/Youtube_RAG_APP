@@ -30,6 +30,10 @@ def _get_secret(key: str, env_fallback: str | None = None) -> str | None:
 GROQ_API_KEY = _get_secret("GROQ_API_KEY")
 DATABASE_URL = _get_secret("DATABASE_URL")
 HF_TOKEN     = _get_secret("HUGGINGFACEHUB_API_TOKEN")
+PROXY_HOST   = _get_secret("PROXY_HOST")
+PROXY_PORT   = _get_secret("PROXY_PORT")
+PROXY_USER   = _get_secret("PROXY_USER")
+PROXY_PASS   = _get_secret("PROXY_PASS")
 
 if GROQ_API_KEY:
     os.environ["GROQ_API_KEY"] = GROQ_API_KEY
@@ -261,6 +265,17 @@ def format_docs(docs) -> str:
     return "\n\n".join(d.page_content for d in docs)
 
 
+def get_proxies() -> dict | None:
+    """Build proxy dict from secrets. Returns None if no proxy configured."""
+    if PROXY_HOST and PROXY_PORT:
+        if PROXY_USER and PROXY_PASS:
+            proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+        else:
+            proxy_url = f"http://{PROXY_HOST}:{PROXY_PORT}"
+        return {"http": proxy_url, "https": proxy_url}
+    return None
+
+
 def drop_pgvector_tables():
     """Drop old PGVector tables so they are recreated with the correct schema."""
     engine = create_engine(DATABASE_URL)
@@ -296,8 +311,9 @@ def build_chain(video_id: str):
     Build the full RAG chain for a video.
     Cached by video_id — subsequent loads of the same video are instant.
     """
-    # 1. Transcript
-    ytt = YouTubeTranscriptApi()
+    # 1. Transcript (with optional proxy to bypass YouTube IP bans)
+    proxies = get_proxies()
+    ytt = YouTubeTranscriptApi(proxies=proxies)
     try:
         fetched = ytt.fetch(video_id, languages=["en"])
     except NoTranscriptFound:
@@ -395,6 +411,12 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
         st.stop()
+
+    # ── Proxy status ──────────────────────────────────────────────────────────
+    if PROXY_HOST:
+        st.markdown(f'<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Proxy active: {PROXY_HOST}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="font-size:0.75rem;color:#888;margin-bottom:0.5rem">⚠ No proxy — may fail on cloud</div>', unsafe_allow_html=True)
 
     # ── Video input ───────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Load a video</div>', unsafe_allow_html=True)
