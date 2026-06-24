@@ -41,6 +41,7 @@ if HF_TOKEN:
     os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
 # ─── LAZY IMPORTS ────────────────────────────────────────────────────────────
+import time
 from sqlalchemy import create_engine, text
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, VideoUnavailable
 from youtube_transcript_api.proxies import WebshareProxyConfig
@@ -267,7 +268,7 @@ def format_docs(docs) -> str:
 
 
 def get_ytt() -> YouTubeTranscriptApi:
-    """Return YouTubeTranscriptApi instance with proxy if configured."""
+    """Return YouTubeTranscriptApi with Webshare rotating proxy if configured."""
     if PROXY_USER and PROXY_PASS:
         proxy_config = WebshareProxyConfig(
             proxy_username=PROXY_USER,
@@ -275,6 +276,25 @@ def get_ytt() -> YouTubeTranscriptApi:
         )
         return YouTubeTranscriptApi(proxy_config=proxy_config)
     return YouTubeTranscriptApi()
+
+
+def fetch_transcript(video_id: str, retries: int = 3) -> str:
+    """Fetch transcript with retry + exponential backoff on 429 errors."""
+    ytt = get_ytt()
+    for attempt in range(retries):
+        try:
+            try:
+                fetched = ytt.fetch(video_id, languages=["en"])
+            except NoTranscriptFound:
+                fetched = ytt.fetch(video_id)
+            return " ".join(part.text for part in fetched)
+        except Exception as e:
+            if attempt < retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                time.sleep(wait)
+                ytt = get_ytt()  # fresh instance on retry
+            else:
+                raise e
 
 
 def drop_pgvector_tables():
@@ -312,13 +332,8 @@ def build_chain(video_id: str):
     Build the full RAG chain for a video.
     Cached by video_id — subsequent loads of the same video are instant.
     """
-    # 1. Transcript (with Webshare proxy to bypass YouTube IP bans)
-    ytt = get_ytt()
-    try:
-        fetched = ytt.fetch(video_id, languages=["en"])
-    except NoTranscriptFound:
-        fetched = ytt.fetch(video_id)
-    transcript = " ".join(part.text for part in fetched)
+    # 1. Transcript with retry + rotating proxy
+    transcript = fetch_transcript(video_id)
 
     # 2. Split
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -414,7 +429,7 @@ with st.sidebar:
 
     # ── Proxy status ──────────────────────────────────────────────────────────
     if PROXY_USER and PROXY_PASS:
-        st.markdown('<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Proxy active</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:0.75rem;color:#4ade80;margin-bottom:0.5rem">🔒 Rotating proxy active</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div style="font-size:0.75rem;color:#f9d423;margin-bottom:0.5rem">⚠ No proxy — may fail on cloud</div>', unsafe_allow_html=True)
 
